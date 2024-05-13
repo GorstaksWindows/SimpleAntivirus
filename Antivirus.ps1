@@ -45,24 +45,42 @@ function Block-Execution {
     # Add your additional blocking logic here, such as killing the process or quarantining the file.
 }
 
-# Function to monitor file system changes
 function Monitor-FileSystem {
-    $fileWatcher = New-Object System.IO.FileSystemWatcher
-    $fileWatcher.Path = "C:\"  # Monitor the entire system
-    $fileWatcher.IncludeSubdirectories = $true
-    $fileWatcher.EnableRaisingEvents = $true
+    # Get all local drives
+    $drives = Get-WmiObject Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 } | Select-Object -ExpandProperty DeviceID
 
-    Register-ObjectEvent $fileWatcher "Changed" -Action {
-        $filePath = $Event.SourceEventArgs.FullPath
-        Write-Host "File modified: $filePath"
+    # Monitor local drives
+    foreach ($drive in $drives) {
+        $fileWatcher = New-Object System.IO.FileSystemWatcher
+        $fileWatcher.Path = $drive + "\"
+        $fileWatcher.IncludeSubdirectories = $true
+        $fileWatcher.EnableRaisingEvents = $true
 
-        # Check if the file is detected as malware on VirusTotal
-        $scanResults = Get-VirusTotalScan -FilePath $filePath
-        if ($scanResults.data.attributes.last_analysis_stats.malicious -gt 0) {
-            Block-Execution -FilePath $filePath -Reason "File detected as malware on VirusTotal"
-        }
-    } | Out-Null
+        Register-ObjectEvent $fileWatcher "Created" -Action {
+            $filePath = $Event.SourceEventArgs.FullPath
+            Write-Host "File created: $filePath"
+
+            # Add your file scanning logic here
+        } | Out-Null
+    }
+
+    # Monitor network shares
+    $networkShares = Get-WmiObject Win32_Share | Where-Object { $_.Type -eq 0 } | Select-Object -ExpandProperty Path
+    foreach ($share in $networkShares) {
+        $fileWatcher = New-Object System.IO.FileSystemWatcher
+        $fileWatcher.Path = $share
+        $fileWatcher.IncludeSubdirectories = $true
+        $fileWatcher.EnableRaisingEvents = $true
+
+        Register-ObjectEvent $fileWatcher "Created" -Action {
+            $filePath = $Event.SourceEventArgs.FullPath
+            Write-Host "File created on network share: $filePath"
+
+            # Add your file scanning logic here
+        } | Out-Null
+    }
 }
+
 
 # Function to monitor running processes
 function Monitor-Processes {
@@ -82,15 +100,6 @@ function Monitor-Processes {
     $processWatcher.Start()
 }
 
-# Function to monitor network activity
-function Monitor-Network {
-    # Implement network monitoring logic here
-}
-
-# Function to perform heuristic scanning
-function Heuristic-Scan {
-    # Implement heuristic scanning logic here
-}
 
 # Check if the script is already added to startup
 if (-Not (Test-Path $MyInvocation.MyCommand.Path -PathType Leaf)) {
@@ -111,11 +120,3 @@ if (-Not (Test-Path $MyInvocation.MyCommand.Path -PathType Leaf)) {
 # Start monitoring
 Monitor-FileSystem
 Monitor-Processes
-Monitor-Network
-Heuristic-Scan
-
-# Keep the script running to maintain monitoring
-Write-Host "Antivirus is now running. Press Ctrl+C to exit."
-while ($true) {
-    Start-Sleep -Seconds 60
-}
