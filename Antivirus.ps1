@@ -76,7 +76,7 @@ function AddToStartup {
     }
 }
 
-# Function to monitor file creations
+# Function to monitor file creations in a directory
 function Monitor-FileCreations {
     $fileWatcher = New-Object System.IO.FileSystemWatcher
     $fileWatcher.Path = "C:\Users"  # Specify the path to monitor here
@@ -96,6 +96,29 @@ function Monitor-FileCreations {
     } | Out-Null
 }
 
+# Function to monitor file creations in network shares
+function Monitor-NetworkFileCreations {
+    $networkShares = Get-WmiObject Win32_Share | Where-Object { $_.Type -eq 0 } | Select-Object -ExpandProperty Path
+    foreach ($share in $networkShares) {
+        $fileWatcher = New-Object System.IO.FileSystemWatcher
+        $fileWatcher.Path = $share
+        $fileWatcher.IncludeSubdirectories = $true
+        $fileWatcher.EnableRaisingEvents = $true
+
+        Register-ObjectEvent $fileWatcher "Created" -Action {
+            $filePath = $Event.SourceEventArgs.FullPath
+            Write-Host "File created on network share: $filePath"
+
+            $scanResults = Get-VirusTotalScan -FilePath $filePath
+
+            # Check if the file is detected as malware on VirusTotal
+            if ($scanResults -ne $null -and $scanResults.data.attributes.last_analysis_stats.malicious -gt 0) {
+                Block-Execution -FilePath $filePath -Reason "File detected as malware on VirusTotal"
+            }
+        } | Out-Null
+    }
+}
+
 # Check if the script is already added to startup
 function IsInStartup {
     $scriptPath = $MyInvocation.MyCommand.Definition
@@ -112,3 +135,4 @@ if (-Not (IsInStartup)) {
 
 # Start monitoring file creations
 Monitor-FileCreations
+Monitor-NetworkFileCreations
