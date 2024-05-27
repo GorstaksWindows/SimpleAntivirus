@@ -20,7 +20,7 @@ function Get-VirusTotalScan {
 
     # Wait for the scan to complete
     while ($response.data.attributes.last_analysis_stats.malicious -eq $null) {
-        Start-Sleep -Seconds 10
+        Start-Sleep -Seconds 600
         $response = Invoke-RestMethod -Uri $VirusTotalUrl -Headers $Headers -Method Get
     }
 
