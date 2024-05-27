@@ -60,13 +60,18 @@ function AddToStartup {
     }
 }
 
-# Function to monitor file creations
-function Monitor-FileCreations {
+# Function to monitor file changes (creations and modifications) on a given path
+function Monitor-Path {
+    param (
+        [string]$Path
+    )
+
     $fileWatcher = New-Object System.IO.FileSystemWatcher
-    $fileWatcher.Path = "C:\Users"  # Specify the path to monitor here
+    $fileWatcher.Path = $Path
     $fileWatcher.IncludeSubdirectories = $true
     $fileWatcher.EnableRaisingEvents = $true
 
+    # Monitor file creations
     Register-ObjectEvent $fileWatcher "Created" -Action {
         $filePath = $Event.SourceEventArgs.FullPath
         Write-Host "New file created: $filePath"
@@ -78,28 +83,34 @@ function Monitor-FileCreations {
             Block-Execution -FilePath $filePath -Reason "File detected as malware on VirusTotal"
         }
     } | Out-Null
+
+    # Monitor file modifications
+    Register-ObjectEvent $fileWatcher "Changed" -Action {
+        $filePath = $Event.SourceEventArgs.FullPath
+        Write-Host "File modified: $filePath"
+
+        $scanResults = Get-VirusTotalScan -FilePath $filePath
+
+        # Check if the file is detected as malware on VirusTotal
+        if ($scanResults.data.attributes.last_analysis_stats.malicious -gt 0) {
+            Block-Execution -FilePath $filePath -Reason "File detected as malware on VirusTotal"
+        }
+    } | Out-Null
 }
 
-# Function to monitor file creations in network shares
-function Monitor-NetworkFileCreations {
+# Function to monitor all local drives
+function Monitor-LocalDrives {
+    $localDrives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -match "^[A-Z]:" }
+    foreach ($drive in $localDrives) {
+        Monitor-Path -Path $drive.Root
+    }
+}
+
+# Function to monitor all network shares
+function Monitor-NetworkShares {
     $networkShares = Get-WmiObject Win32_Share | Where-Object { $_.Type -eq 0 } | Select-Object -ExpandProperty Path
     foreach ($share in $networkShares) {
-        $fileWatcher = New-Object System.IO.FileSystemWatcher
-        $fileWatcher.Path = $share
-        $fileWatcher.IncludeSubdirectories = $true
-        $fileWatcher.EnableRaisingEvents = $true
-
-        Register-ObjectEvent $fileWatcher "Created" -Action {
-            $filePath = $Event.SourceEventArgs.FullPath
-            Write-Host "File created on network share: $filePath"
-
-            $scanResults = Get-VirusTotalScan -FilePath $filePath
-
-            # Check if the file is detected as malware on VirusTotal
-            if ($scanResults -ne $null -and $scanResults.data.attributes.last_analysis_stats.malicious -gt 0) {
-                Block-Execution -FilePath $filePath -Reason "File detected as malware on VirusTotal"
-            }
-        } | Out-Null
+        Monitor-Path -Path $share
     }
 }
 
@@ -117,6 +128,6 @@ if (-Not (IsInStartup)) {
     AddToStartup
 }
 
-# Start monitoring file creations
-Monitor-FileCreations
-Monitor-NetworkFileCreations
+# Start monitoring all local drives and network shares
+Monitor-LocalDrives
+Monitor-NetworkShares
