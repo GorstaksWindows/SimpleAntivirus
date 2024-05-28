@@ -1,6 +1,9 @@
 # Set your VirusTotal public API key here
 $VirusTotalApiKey = "0393b0784dba04ea0c6f5c1e45cac1c35ba83b1fc09e1d792d270dcc159d53d8"
 
+# Configurable parameters
+$MonitoringInterval = 600 # Time in seconds to wait before checking the scan results again
+
 # Function to check a file on VirusTotal
 function Get-VirusTotalScan {
     param (
@@ -13,15 +16,27 @@ function Get-VirusTotalScan {
         "x-apikey" = $VirusTotalApiKey
     }
 
-    $fileHash = (Get-FileHash -Algorithm SHA256 $FilePath).Hash
-    $VirusTotalUrl += "/$fileHash"
-
-    $response = Invoke-RestMethod -Uri $VirusTotalUrl -Headers $Headers -Method Get
-
-    # Wait for the scan to complete
-    while ($response.data.attributes.last_analysis_stats.malicious -eq $null) {
-        Start-Sleep -Seconds 600
+    try {
+        # Get the file hash
+        $fileHash = (Get-FileHash -Algorithm SHA256 $FilePath).Hash
+        $VirusTotalUrl += "/$fileHash"
+        # Query VirusTotal for the file scan results
         $response = Invoke-RestMethod -Uri $VirusTotalUrl -Headers $Headers -Method Get
+    } catch {
+        Write-Error "Error accessing VirusTotal API: $_"
+        return $null
+    }
+
+    # Wait for the scan to complete if the initial query returns no results
+    while ($response.data.attributes.last_analysis_stats.malicious -eq $null) {
+        Start-Sleep -Seconds $MonitoringInterval
+        try {
+            # Retry the query to check if the scan results are available
+            $response = Invoke-RestMethod -Uri $VirusTotalUrl -Headers $Headers -Method Get
+        } catch {
+            Write-Error "Error accessing VirusTotal API: $_"
+            return $null
+        }
     }
 
     $reportUrl = "https://www.virustotal.com/gui/file/$($response.data.id)/detection"
@@ -38,11 +53,27 @@ function Block-Execution {
     )
 
     Write-Host "Blocked Execution: $Reason"
-    
+    # Log the blocked file
+    Write-Log "Blocked file: $FilePath - Reason: $Reason"
+
     # Revoke all permissions from the infected file using icacls
     icacls $FilePath /deny Everyone:(DE)
 
     # Add your additional blocking logic here, such as killing the process or quarantining the file.
+}
+
+# Function to unblock execution
+function Unblock-Execution {
+    param (
+        [string]$FilePath
+    )
+
+    Write-Host "Unblocking file: $FilePath"
+    # Log the unblocked file
+    Write-Log "Unblocked file: $FilePath"
+
+    # Grant permissions to the file
+    icacls $FilePath /grant Everyone:(F)
 }
 
 # Function to add the script to Windows startup folder
@@ -79,8 +110,9 @@ function Monitor-Path {
         $scanResults = Get-VirusTotalScan -FilePath $filePath
 
         # Check if the file is detected as malware on VirusTotal
-        if ($scanResults.data.attributes.last_analysis_stats.malicious -gt 0) {
+        if ($scanResults -and $scanResults.data.attributes.last_analysis_stats.malicious -gt 0) {
             Block-Execution -FilePath $filePath -Reason "File detected as malware on VirusTotal"
+            Send-Notification -Message "Blocked malicious file: $filePath"
         }
     } | Out-Null
 
@@ -92,10 +124,41 @@ function Monitor-Path {
         $scanResults = Get-VirusTotalScan -FilePath $filePath
 
         # Check if the file is detected as malware on VirusTotal
-        if ($scanResults.data.attributes.last_analysis_stats.malicious -gt 0) {
+        if ($scanResults -and $scanResults.data.attributes.last_analysis_stats.malicious -gt 0) {
             Block-Execution -FilePath $filePath -Reason "File detected as malware on VirusTotal"
+            Send-Notification -Message "Blocked malicious file: $filePath"
         }
     } | Out-Null
+}
+
+# Function to log messages
+function Write-Log {
+    param (
+        [string]$Message
+    )
+
+    $documentsPath = [Environment]::GetFolderPath("MyDocuments")
+    $logFilePath = Join-Path $documentsPath "SimpleAntivirusLog.log"
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "$timestamp - $Message"
+    Add-Content -Path $logFilePath -Value $logMessage
+}
+
+# Function to send notifications
+function Send-Notification {
+    param (
+        [string]$Message
+    )
+
+    # Example: Send notification via email
+    # Note: Replace the following parameters with your actual email settings
+    $smtpServer = "smtp.your-email-provider.com"
+    $smtpFrom = "your-email@your-domain.com"
+    $smtpTo = "recipient-email@domain.com"
+    $subject = "SimpleAntivirus Notification"
+    $body = $Message
+
+    Send-MailMessage -SmtpServer $smtpServer -From $smtpFrom -To $smtpTo -Subject $subject -Body $body
 }
 
 # Function to monitor all local drives
