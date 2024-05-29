@@ -2,7 +2,7 @@
 $VirusTotalApiKey = "0393b0784dba04ea0c6f5c1e45cac1c35ba83b1fc09e1d792d270dcc159d53d8"
 
 # Configurable parameters
-$MonitoringInterval = 600 # Time in seconds to wait before checking the scan results again
+$MonitoringInterval = 60 # Time in seconds to wait before checking the scan results again
 
 # Function to check a file on VirusTotal
 function Get-VirusTotalScan {
