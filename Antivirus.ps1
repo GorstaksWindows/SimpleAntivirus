@@ -1,10 +1,12 @@
-# Check for administrative privileges
-$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "Restarting script with administrative privileges..."
-    Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Definition)`"" -Verb RunAs
-    exit
-}
+# Hide the console window
+Add-Type -Name Window -Namespace Console -MemberDefinition '
+[DllImport("Kernel32.dll")]
+public static extern IntPtr GetConsoleWindow();
+[DllImport("User32.dll")]
+public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+'
+$consolePtr = [Console.Window]::GetConsoleWindow()
+[Console.Window]::ShowWindow($consolePtr, 0)  # 0 hides the window
 
 # Set your VirusTotal public API key here
 $VirusTotalApiKey = "0393b0784dba04ea0c6f5c1e45cac1c35ba83b1fc09e1d792d270dcc159d53d8"
@@ -84,20 +86,6 @@ function Unblock-Execution {
     icacls $FilePath /grant Everyone:(F)
 }
 
-# Function to add the script to Windows startup folder
-function AddToStartup {
-    $scriptPath = $MyInvocation.MyCommand.Definition
-    $startupFolderPath = [Environment]::GetFolderPath("CommonStartup") # Changed to CommonStartup for all users
-    $shortcutPath = Join-Path $startupFolderPath "SimpleAntivirus.lnk"
-
-    if (-Not (Test-Path $shortcutPath)) {
-        $WScriptShell = New-Object -ComObject WScript.Shell
-        $Shortcut = $WScriptShell.CreateShortcut($shortcutPath)
-        $Shortcut.TargetPath = $scriptPath
-        $Shortcut.Save()
-        Write-Host "Script added to startup."
-    }
-}
 
 # Function to monitor file changes (creations and modifications) on a given path
 function Monitor-Path {
@@ -152,23 +140,6 @@ function Write-Log {
     Add-Content -Path $logFilePath -Value $logMessage
 }
 
-# Function to send notifications
-function Send-Notification {
-    param (
-        [string]$Message
-    )
-
-    # Example: Send notification via email
-    # Note: Replace the following parameters with your actual email settings
-    $smtpServer = "smtp.your-email-provider.com"
-    $smtpFrom = "your-email@your-domain.com"
-    $smtpTo = "recipient-email@domain.com"
-    $subject = "SimpleAntivirus Notification"
-    $body = $Message
-
-    Send-MailMessage -SmtpServer $smtpServer -From $smtpFrom -To $smtpTo -Subject $subject -Body $body
-}
-
 # Function to monitor all local drives
 function Monitor-LocalDrives {
     $localDrives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -match "^[A-Z]:" }
@@ -185,30 +156,125 @@ function Monitor-NetworkShares {
     }
 }
 
-# Check if the script is already added to startup
-function IsInStartup {
+# Load necessary .NET assemblies for system tray icon
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# Function to create the installation directory
+function Create-InstallationDirectory {
+    $installDir = Join-Path $env:ProgramFiles "SimpleAntivirus"
+
+    # Create the directory if it doesn't exist
+    if (-not (Test-Path $installDir)) {
+        New-Item -ItemType Directory -Path $installDir | Out-Null
+    }
+
+    return $installDir
+}
+
+# Function to move the script to the installation directory
+function Move-ToInstallationDirectory {
+    $installDir = Create-InstallationDirectory
     $scriptPath = $MyInvocation.MyCommand.Definition
-    $startupFolderPath = [Environment]::GetFolderPath("CommonStartup") # Changed to CommonStartup for all users
+    $destination = Join-Path $installDir (Split-Path $scriptPath -Leaf)
 
-    if ([string]::IsNullOrEmpty($scriptPath) -or [string]::IsNullOrEmpty($startupFolderPath)) {
-        Write-Host "Script path or startup folder path is null or empty."
-        return $false
-    }
-
-    $shortcutPath = Join-Path $startupFolderPath "SimpleAntivirus.lnk"
-
-    if (-Not (Test-Path $shortcutPath)) {
-        return $false
-    }
-
-    return $true
+    # Move the script to the installation directory
+    Move-Item $scriptPath $destination -Force
+    return $destination
 }
 
-# Check if the script is already added to startup
-if (-Not (IsInStartup)) {
-    AddToStartup
+# Function to initialize logging
+function Initialize-Logging {
+    $installDir = Create-InstallationDirectory
+    $logFilePath = Join-Path $installDir "SimpleAntivirusLog.log"
+    # Create or truncate the log file
+    New-Item -Path $logFilePath -ItemType File -Force | Out-Null
+    return $logFilePath
 }
 
-# Start monitoring all local drives and network shares
-Monitor-LocalDrives
-Monitor-NetworkShares
+# Function to log messages
+function Write-Log {
+    param (
+        [string]$Message
+    )
+
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "$timestamp - $Message"
+    Add-Content -Path $logFilePath -Value $logMessage
+}
+
+# Function to create the system tray icon
+function Create-TrayIcon {
+    # Use the executable's own icon
+    $iconPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $trayIcon = New-Object System.Windows.Forms.NotifyIcon
+    $trayIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
+    $trayIcon.Text = "Simple Antivirus"
+    $trayIcon.Visible = $true
+
+    # Create a context menu for the tray icon
+    $contextMenu = New-Object System.Windows.Forms.ContextMenu
+    $viewLogItem = New-Object System.Windows.Forms.MenuItem "View Log"
+    $exitItem = New-Object System.Windows.Forms.MenuItem "Exit"
+
+    $contextMenu.MenuItems.Add($viewLogItem)
+    $contextMenu.MenuItems.Add($exitItem)
+    $trayIcon.ContextMenu = $contextMenu
+
+    # Add event handler for View Log
+    $viewLogItem.add_Click({
+        $installDir = Create-InstallationDirectory
+        $logFilePath = Join-Path $installDir "SimpleAntivirusLog.log"
+        if (Test-Path $logFilePath) {
+            Invoke-Item $logFilePath
+        } else {
+            [System.Windows.Forms.MessageBox]::Show("Log file not found.", "Simple Antivirus")
+        }
+    })
+
+    # Add event handler for Exit
+    $exitItem.add_Click({
+        $trayIcon.Visible = $false
+        [System.Windows.Forms.Application]::Exit()
+        Stop-Process -Id $PID
+    })
+
+    # Prevent the script from exiting
+    [System.Windows.Forms.Application]::Run()
+}
+
+# Function to add the executable to Windows startup folder
+function AddToStartup {
+    $installDir = Create-InstallationDirectory
+    $executablePath = Join-Path $installDir "Antivirus.exe"
+    $startupFolderPath = [System.IO.Path]::Combine([System.Environment]::GetFolderPath("Startup"), "SimpleAntivirus.lnk")
+
+    if (-not (Test-Path $startupFolderPath)) {
+        Move-Item -Path $executablePath -Destination $startupFolderPath -Force
+        Write-Log "Executable moved to startup folder."
+    }
+}
+
+# Initialize logging
+$logFilePath = Initialize-Logging
+Write-Log "Script installed to $($installDir)."
+
+function Write-Log {
+    param (
+        [string]$Message
+    )
+
+    try {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $logMessage = "$timestamp - $Message"
+        Add-Content -Path $logFilePath -Value $logMessage -ErrorAction Stop
+    } catch {
+        Write-Error "Failed to write to log file: $_"
+    }
+}
+
+# Create and show the system tray icon
+Create-TrayIcon
+
+# Add script to startup
+AddToStartup
