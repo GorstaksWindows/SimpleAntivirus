@@ -1,3 +1,11 @@
+# Check for administrative privileges
+$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "Restarting script with administrative privileges..."
+    Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Definition)`"" -Verb RunAs
+    exit
+}
+
 # Set your VirusTotal public API key here
 $VirusTotalApiKey = "0393b0784dba04ea0c6f5c1e45cac1c35ba83b1fc09e1d792d270dcc159d53d8"
 
@@ -79,7 +87,7 @@ function Unblock-Execution {
 # Function to add the script to Windows startup folder
 function AddToStartup {
     $scriptPath = $MyInvocation.MyCommand.Definition
-    $startupFolderPath = [Environment]::GetFolderPath("Startup")
+    $startupFolderPath = [Environment]::GetFolderPath("CommonStartup") # Changed to CommonStartup for all users
     $shortcutPath = Join-Path $startupFolderPath "SimpleAntivirus.lnk"
 
     if (-Not (Test-Path $shortcutPath)) {
@@ -180,10 +188,20 @@ function Monitor-NetworkShares {
 # Check if the script is already added to startup
 function IsInStartup {
     $scriptPath = $MyInvocation.MyCommand.Definition
-    $startupFolderPath = [Environment]::GetFolderPath("Startup")
+    $startupFolderPath = [Environment]::GetFolderPath("CommonStartup") # Changed to CommonStartup for all users
+
+    if ([string]::IsNullOrEmpty($scriptPath) -or [string]::IsNullOrEmpty($startupFolderPath)) {
+        Write-Host "Script path or startup folder path is null or empty."
+        return $false
+    }
+
     $shortcutPath = Join-Path $startupFolderPath "SimpleAntivirus.lnk"
 
-    return (Test-Path $shortcutPath)
+    if (-Not (Test-Path $shortcutPath)) {
+        return $false
+    }
+
+    return $true
 }
 
 # Check if the script is already added to startup
