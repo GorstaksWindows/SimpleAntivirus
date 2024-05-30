@@ -86,18 +86,40 @@ function Unblock-Execution {
 
 # Function to add the script to Windows startup folder
 function AddToStartup {
-    $scriptPath = $MyInvocation.MyCommand.Definition
-    $startupFolderPath = [Environment]::GetFolderPath("CommonStartup") # Changed to CommonStartup for all users
+    # Get the script path
+    $scriptPath = $MyInvocation.MyCommand.Path
+
+    # Ensure the script path is valid
+    if (-not (Test-Path $scriptPath)) {
+        Write-Error "Script path is invalid or does not exist: $scriptPath"
+        return
+    }
+
+    $startupFolderPath = [Environment]::GetFolderPath("Startup")
+
+    # Create the shortcut path
     $shortcutPath = Join-Path $startupFolderPath "SimpleAntivirus.lnk"
 
-    if (-Not (Test-Path $shortcutPath)) {
-        $WScriptShell = New-Object -ComObject WScript.Shell
-        $Shortcut = $WScriptShell.CreateShortcut($shortcutPath)
+    # Create the WScript Shell object
+    $WScriptShell = New-Object -ComObject WScript.Shell
+
+    # Create the shortcut
+    $Shortcut = $WScriptShell.CreateShortcut($shortcutPath)
+
+    # Set the target path for the shortcut
+    try {
         $Shortcut.TargetPath = $scriptPath
         $Shortcut.Save()
         Write-Host "Script added to startup."
+    } catch {
+        Write-Error "Failed to create shortcut: $_"
     }
 }
+
+# Call the AddToStartup function
+AddToStartup
+
+
 
 # Function to monitor file changes (creations and modifications) on a given path
 function Monitor-Path {
