@@ -174,23 +174,6 @@ function Write-Log {
     Add-Content -Path $logFilePath -Value $logMessage
 }
 
-# Function to send notifications
-function Send-Notification {
-    param (
-        [string]$Message
-    )
-
-    # Example: Send notification via email
-    # Note: Replace the following parameters with your actual email settings
-    $smtpServer = "smtp.your-email-provider.com"
-    $smtpFrom = "your-email@your-domain.com"
-    $smtpTo = "recipient-email@domain.com"
-    $subject = "SimpleAntivirus Notification"
-    $body = $Message
-
-    Send-MailMessage -SmtpServer $smtpServer -From $smtpFrom -To $smtpTo -Subject $subject -Body $body
-}
-
 # Function to monitor all local drives
 function Monitor-LocalDrives {
     $localDrives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -match "^[A-Z]:" }
